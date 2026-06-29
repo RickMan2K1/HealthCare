@@ -1,0 +1,14 @@
+# Virtual environment
+venv/
+env/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Large Files
+*.mp4
+
+# Folders & Sensistive
+data/
+.env
