@@ -12,9 +12,14 @@ __pycache__/
 
 # Folders & Sensistive
 data/
+*.csv
+*.parquet
 .env
 screenshots/
 glue_dependencies/
+credentials.json
+.aws/
+*.pem
 
 # Temp files
 ~$*

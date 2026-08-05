@@ -1,0 +1,167 @@
+{
+    "Workflow": {
+        "Name": "wf_healthcare_medallion_pipeline",
+        "Description": "End-to-end Medallion pipeline orchestrating Bronze, Silver, and Gold",
+        "DefaultRunProperties": {},
+        "CreatedOn": "2026-07-29T13:07:15.280000-04:00",
+        "LastModifiedOn": "2026-07-29T13:07:15.280000-04:00",
+        "Graph": {
+            "Nodes": [
+                {
+                    "Type": "TRIGGER",
+                    "Name": "trig_start_pipeline",
+                    "UniqueId": "wnode_4618c4c4442ce7933a4cd2e097f6089bbe26afe92e0323b211af93371b2eba3b",
+                    "TriggerDetails": {
+                        "Trigger": {
+                            "Name": "trig_start_pipeline",
+                            "WorkflowName": "wf_healthcare_medallion_pipeline",
+                            "Type": "ON_DEMAND",
+                            "State": "CREATED",
+                            "Actions": [
+                                {
+                                    "JobName": "healthcare_bronze_to_silver"
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "Type": "TRIGGER",
+                    "Name": "trig_silver_success",
+                    "UniqueId": "wnode_14ef716ca20626d135afb7edcbf044dabc4baa7575057825be67ca085138e3e6",
+                    "TriggerDetails": {
+                        "Trigger": {
+                            "Name": "trig_silver_success",
+                            "WorkflowName": "wf_healthcare_medallion_pipeline",
+                            "Type": "CONDITIONAL",
+                            "State": "ACTIVATED",
+                            "Actions": [
+                                {
+                                    "JobName": "healthcare_silver_to_gold"
+                                }
+                            ],
+                            "Predicate": {
+                                "Logical": "AND",
+                                "Conditions": [
+                                    {
+                                        "LogicalOperator": "EQUALS",
+                                        "JobName": "healthcare_bronze_to_silver",
+                                        "State": "SUCCEEDED"
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                },
+                {
+                    "Type": "TRIGGER",
+                    "Name": "trig_silver_crawler",
+                    "UniqueId": "wnode_45930780b6e57f8d8046dd6ba7525f4e58c982dec4186b2ccc6aa7acbce19d74",
+                    "TriggerDetails": {
+                        "Trigger": {
+                            "Name": "trig_silver_crawler",
+                            "WorkflowName": "wf_healthcare_medallion_pipeline",
+                            "Type": "CONDITIONAL",
+                            "State": "ACTIVATED",
+                            "Actions": [
+                                {
+                                    "CrawlerName": "healthcare_silver_crawler"
+                                }
+                            ],
+                            "Predicate": {
+                                "Logical": "AND",
+                                "Conditions": [
+                                    {
+                                        "LogicalOperator": "EQUALS",
+                                        "JobName": "healthcare_bronze_to_silver",
+                                        "State": "SUCCEEDED"
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                },
+                {
+                    "Type": "TRIGGER",
+                    "Name": "trig_quarantine_crawler",
+                    "UniqueId": "wnode_a8675b5c70c102be011310393ed12f78930a5fd7ca2a351d6afb0721ea4f619d",
+                    "TriggerDetails": {
+                        "Trigger": {
+                            "Name": "trig_quarantine_crawler",
+                            "WorkflowName": "wf_healthcare_medallion_pipeline",
+                            "Type": "CONDITIONAL",
+                            "State": "ACTIVATED",
+                            "Actions": [
+                                {
+                                    "CrawlerName": "healthcare_quarantine_crawler"
+                                }
+                            ],
+                            "Predicate": {
+                                "Logical": "AND",
+                                "Conditions": [
+                                    {
+                                        "LogicalOperator": "EQUALS",
+                                        "JobName": "healthcare_bronze_to_silver",
+                                        "State": "SUCCEEDED"
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                },
+                {
+                    "Type": "CRAWLER",
+                    "Name": "healthcare_quarantine_crawler",
+                    "UniqueId": "wnode_7037853cb82b51009e3f84fe3101a244bd88bb68ba3bf86c20f79ae08e5ba1f0"
+                },
+                {
+                    "Type": "JOB",
+                    "Name": "healthcare_silver_to_gold",
+                    "UniqueId": "wnode_ee8d3cfb4591d95dc221dac16a4f3b6500ada7ffb80956f27b897911fdee7bc3",
+                    "JobDetails": {}
+                },
+                {
+                    "Type": "CRAWLER",
+                    "Name": "healthcare_silver_crawler",
+                    "UniqueId": "wnode_45780a1bc2c95592d6eb93fc5787bd4ec21c6570ececacac9937008578a9eda6"
+                },
+                {
+                    "Type": "JOB",
+                    "Name": "healthcare_bronze_to_silver",
+                    "UniqueId": "wnode_ac4a0ba28d1deb824c8c4a97674d9e4d549546b9d2556035563f0926c77a858a",
+                    "JobDetails": {}
+                }
+            ],
+            "Edges": [
+                {
+                    "SourceId": "wnode_a8675b5c70c102be011310393ed12f78930a5fd7ca2a351d6afb0721ea4f619d",
+                    "DestinationId": "wnode_7037853cb82b51009e3f84fe3101a244bd88bb68ba3bf86c20f79ae08e5ba1f0"
+                },
+                {
+                    "SourceId": "wnode_14ef716ca20626d135afb7edcbf044dabc4baa7575057825be67ca085138e3e6",
+                    "DestinationId": "wnode_ee8d3cfb4591d95dc221dac16a4f3b6500ada7ffb80956f27b897911fdee7bc3"
+                },
+                {
+                    "SourceId": "wnode_45930780b6e57f8d8046dd6ba7525f4e58c982dec4186b2ccc6aa7acbce19d74",
+                    "DestinationId": "wnode_45780a1bc2c95592d6eb93fc5787bd4ec21c6570ececacac9937008578a9eda6"
+                },
+                {
+                    "SourceId": "wnode_4618c4c4442ce7933a4cd2e097f6089bbe26afe92e0323b211af93371b2eba3b",
+                    "DestinationId": "wnode_ac4a0ba28d1deb824c8c4a97674d9e4d549546b9d2556035563f0926c77a858a"
+                },
+                {
+                    "SourceId": "wnode_ac4a0ba28d1deb824c8c4a97674d9e4d549546b9d2556035563f0926c77a858a",
+                    "DestinationId": "wnode_14ef716ca20626d135afb7edcbf044dabc4baa7575057825be67ca085138e3e6"
+                },
+                {
+                    "SourceId": "wnode_ac4a0ba28d1deb824c8c4a97674d9e4d549546b9d2556035563f0926c77a858a",
+                    "DestinationId": "wnode_45930780b6e57f8d8046dd6ba7525f4e58c982dec4186b2ccc6aa7acbce19d74"
+                },
+                {
+                    "SourceId": "wnode_ac4a0ba28d1deb824c8c4a97674d9e4d549546b9d2556035563f0926c77a858a",
+                    "DestinationId": "wnode_a8675b5c70c102be011310393ed12f78930a5fd7ca2a351d6afb0721ea4f619d"
+                }
+            ]
+        }
+    }
+}

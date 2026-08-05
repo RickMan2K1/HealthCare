@@ -1,0 +1,75 @@
+{
+	"jobConfig": {
+		"name": "GoogleDrive_to_Bronze_ETL",
+		"description": "",
+		"role": "arn:aws:iam::890059276181:role/HealthCareGoogleRole",
+		"command": "glueetl",
+		"version": "5.1",
+		"runtime": null,
+		"workerType": "G.1X",
+		"numberOfWorkers": 10,
+		"maxCapacity": 10,
+		"jobRunQueuingEnabled": false,
+		"maxRetries": 0,
+		"timeout": 480,
+		"maxConcurrentRuns": 5,
+		"security": "none",
+		"scriptName": "GoogleDrive_to_Bronze_ETL.py",
+		"scriptLocation": "s3://aws-glue-assets-890059276181-us-east-1/scripts/",
+		"language": "python-3",
+		"spark": true,
+		"sparkConfiguration": "standard",
+		"jobParameters": [
+			{
+				"key": "--aws_region",
+				"value": "us-east-1",
+				"existing": false
+			},
+			{
+				"key": "--bronze_bucket",
+				"value": "healthcare-rick",
+				"existing": false
+			},
+			{
+				"key": "--conf",
+				"value": "spark.eventLog.rolling.enabled=true --conf spark.sql.catalog.glue_catalog.glue.skip-name-validation=true",
+				"existing": false
+			},
+			{
+				"key": "--job_name",
+				"value": "GoogleDrive_to_Bronze_ETL",
+				"existing": false
+			},
+			{
+				"key": "--secret_name",
+				"value": "GoogleDriveServiceAccount",
+				"existing": false
+			},
+			{
+				"key": "--target_folder_id",
+				"value": "1YR1k5NScmYhwUfa2rXWLIpgPFPjn75oQ",
+				"existing": false
+			}
+		],
+		"tags": [],
+		"jobMode": "DEVELOPER_MODE",
+		"createdOn": "2026-07-08T19:01:41.848Z",
+		"developerMode": true,
+		"connectionsList": [],
+		"temporaryDirectory": "s3://aws-glue-assets-890059276181-us-east-1/temporary/",
+		"additionalPythonModules": "google-auth,google-api-python-client,google-auth-httplib2",
+		"logging": true,
+		"glueHiveMetastore": true,
+		"etlAutoTuning": true,
+		"metrics": true,
+		"observabilityMetrics": true,
+		"bookmark": "job-bookmark-disable",
+		"sparkPath": "s3://aws-glue-assets-890059276181-us-east-1/sparkHistoryLogs/",
+		"flexExecution": false,
+		"minFlexWorkers": null,
+		"maintenanceWindow": null
+	},
+	"hasBeenSaved": false,
+	"usageProfileName": null,
+	"script": "import os\r\nimport sys\r\nimport json\r\nimport io\r\nimport re\r\nimport uuid\r\nimport boto3\r\n\r\nfrom datetime import datetime, timezone\r\n\r\nfrom google.oauth2 import service_account\r\nfrom googleapiclient.discovery import build\r\nfrom googleapiclient.http import MediaIoBaseDownload\r\n\r\nfrom pyspark.context import SparkContext\r\nfrom awsglue.context import GlueContext\r\nfrom awsglue.job import Job\r\nfrom awsglue.utils import getResolvedOptions\r\n\r\n\r\n# =====================================================================\r\n# 1. INITIALIZE AWS GLUE\r\n# =====================================================================\r\n\r\nargs = getResolvedOptions(\r\n    sys.argv,\r\n    [\r\n        \"JOB_NAME\",\r\n        \"secret_name\",\r\n        \"aws_region\",\r\n        \"target_folder_id\",\r\n        \"bronze_bucket\",\r\n    ],\r\n)\r\n\r\nsc = SparkContext()\r\nglue_context = GlueContext(sc)\r\nspark = glue_context.spark_session\r\n\r\njob = Job(glue_context)\r\njob.init(args[\"JOB_NAME\"], args)\r\n\r\n\r\n# =====================================================================\r\n# 2. READ GOOGLE SERVICE ACCOUNT SECRET FROM AWS SECRETS MANAGER\r\n# =====================================================================\r\n\r\ndef get_google_drive_secret(secret_name, region_name):\r\n    \"\"\"\r\n    Retrieves the complete Google service-account JSON\r\n    from AWS Secrets Manager.\r\n    \"\"\"\r\n\r\n    secrets_client = boto3.client(\r\n        \"secretsmanager\",\r\n        region_name=region_name,\r\n    )\r\n\r\n    try:\r\n        response = secrets_client.get_secret_value(\r\n            SecretId=secret_name,\r\n        )\r\n\r\n        if \"SecretString\" not in response:\r\n            raise RuntimeError(\r\n                \"The AWS secret does not contain a SecretString value.\"\r\n            )\r\n\r\n        secret_data = json.loads(response[\"SecretString\"])\r\n\r\n        required_keys = [\r\n            \"type\",\r\n            \"project_id\",\r\n            \"private_key\",\r\n            \"client_email\",\r\n            \"token_uri\",\r\n        ]\r\n\r\n        missing_keys = [\r\n            key for key in required_keys\r\n            if key not in secret_data\r\n        ]\r\n\r\n        if missing_keys:\r\n            raise KeyError(\r\n                f\"Service-account secret is missing keys: {missing_keys}\"\r\n            )\r\n\r\n        return secret_data\r\n\r\n    except Exception as error:\r\n        print(\r\n            f\"Unable to retrieve Google credentials from secret \"\r\n            f\"'{secret_name}': {error}\"\r\n        )\r\n        raise\r\n\r\n\r\nservice_account_info = get_google_drive_secret(\r\n    secret_name=args[\"secret_name\"],\r\n    region_name=args[\"aws_region\"],\r\n)\r\n\r\n\r\n# =====================================================================\r\n# 3. AUTHENTICATE WITH GOOGLE DRIVE\r\n# =====================================================================\r\n\r\nGOOGLE_DRIVE_SCOPES = [\r\n    \"https://www.googleapis.com/auth/drive.readonly\"\r\n]\r\n\r\ngoogle_credentials = (\r\n    service_account.Credentials.from_service_account_info(\r\n        service_account_info,\r\n        scopes=GOOGLE_DRIVE_SCOPES,\r\n    )\r\n)\r\n\r\ndrive_service = build(\r\n    \"drive\",\r\n    \"v3\",\r\n    credentials=google_credentials,\r\n    cache_discovery=False,\r\n)\r\n\r\n\r\n# =====================================================================\r\n# 4. FIND CSV FILES INSIDE THE GOOGLE DRIVE FOLDER\r\n# =====================================================================\r\n\r\ndef list_csv_files(drive_client, folder_id):\r\n    \"\"\"\r\n    Returns all CSV files directly inside the given Google Drive folder.\r\n    \"\"\"\r\n\r\n    csv_files = []\r\n    page_token = None\r\n\r\n    query = (\r\n        f\"'{folder_id}' in parents \"\r\n        \"and mimeType = 'text/csv' \"\r\n        \"and trashed = false\"\r\n    )\r\n\r\n    while True:\r\n        response = (\r\n            drive_client.files()\r\n            .list(\r\n                q=query,\r\n                fields=(\r\n                    \"nextPageToken,\"\r\n                    \"files(id,name,mimeType,modifiedTime,size)\"\r\n                ),\r\n                pageSize=1000,\r\n                pageToken=page_token,\r\n                supportsAllDrives=True,\r\n                includeItemsFromAllDrives=True,\r\n            )\r\n            .execute()\r\n        )\r\n\r\n        csv_files.extend(response.get(\"files\", []))\r\n\r\n        page_token = response.get(\"nextPageToken\")\r\n\r\n        if not page_token:\r\n            break\r\n\r\n    return csv_files\r\n\r\n\r\ntarget_folder_id = args[\"target_folder_id\"]\r\n\r\ngoogle_drive_files = list_csv_files(\r\n    drive_client=drive_service,\r\n    folder_id=target_folder_id,\r\n)\r\n\r\nif not google_drive_files:\r\n    raise RuntimeError(\r\n        f\"No CSV files were found in Google Drive folder \"\r\n        f\"'{target_folder_id}'. Confirm that the folder is shared with \"\r\n        f\"the service-account email.\"\r\n    )\r\n\r\nprint(\r\n    f\"Found {len(google_drive_files)} CSV file(s) \"\r\n    f\"in the Google Drive folder.\"\r\n)\r\n\r\n\r\n# =====================================================================\r\n# 5. DOWNLOAD GOOGLE DRIVE FILES AND UPLOAD THEM TO TEMPORARY S3\r\n# =====================================================================\r\n\r\ndef clean_file_name(file_name):\r\n    \"\"\"\r\n    Removes characters that may create problematic S3 object keys.\r\n    \"\"\"\r\n\r\n    cleaned_name = re.sub(\r\n        r'[^A-Za-z0-9._-]',\r\n        \"_\",\r\n        file_name,\r\n    )\r\n\r\n    if not cleaned_name.lower().endswith(\".csv\"):\r\n        cleaned_name = f\"{cleaned_name}.csv\"\r\n\r\n    return cleaned_name\r\n\r\n\r\ndef download_google_file(drive_client, file_id):\r\n    \"\"\"\r\n    Downloads a Google Drive file into memory.\r\n    \"\"\"\r\n\r\n    request = drive_client.files().get_media(\r\n        fileId=file_id,\r\n        supportsAllDrives=True,\r\n    )\r\n\r\n    file_buffer = io.BytesIO()\r\n\r\n    downloader = MediaIoBaseDownload(\r\n        file_buffer,\r\n        request,\r\n        chunksize=10 * 1024 * 1024,\r\n    )\r\n\r\n    download_complete = False\r\n\r\n    while not download_complete:\r\n        _, download_complete = downloader.next_chunk()\r\n\r\n    file_buffer.seek(0)\r\n\r\n    return file_buffer\r\n\r\n\r\ns3_client = boto3.client(\r\n    \"s3\",\r\n    region_name=args[\"aws_region\"],\r\n)\r\n\r\nbronze_bucket = args[\"bronze_bucket\"]\r\n\r\ncurrent_date = datetime.now(timezone.utc).strftime(\"%Y-%m-%d\")\r\nrun_id = str(uuid.uuid4())\r\n\r\ntemporary_prefix = (\r\n    f\"temporary/google-drive/\"\r\n    f\"load_date={current_date}/\"\r\n    f\"run_id={run_id}\"\r\n)\r\n\r\nuploaded_s3_keys = []\r\n\r\nfor google_file in google_drive_files:\r\n    file_id = google_file[\"id\"]\r\n    original_file_name = google_file[\"name\"]\r\n    safe_file_name = clean_file_name(original_file_name)\r\n\r\n    print(f\"Downloading Google Drive file: {original_file_name}\")\r\n\r\n    downloaded_file = download_google_file(\r\n        drive_client=drive_service,\r\n        file_id=file_id,\r\n    )\r\n\r\n    s3_key = f\"{temporary_prefix}/{safe_file_name}\"\r\n\r\n    try:\r\n        s3_client.upload_fileobj(\r\n            Fileobj=downloaded_file,\r\n            Bucket=bronze_bucket,\r\n            Key=s3_key,\r\n        )\r\n\r\n        uploaded_s3_keys.append(s3_key)\r\n\r\n        print(\r\n            f\"Uploaded '{original_file_name}' to \"\r\n            f\"s3://{bronze_bucket}/{s3_key}\"\r\n        )\r\n\r\n    except Exception as error:\r\n        print(\r\n            f\"Failed to upload '{original_file_name}' to S3: {error}\"\r\n        )\r\n        raise\r\n\r\n\r\nif not uploaded_s3_keys:\r\n    raise RuntimeError(\r\n        \"No files were uploaded to the temporary S3 location.\"\r\n    )\r\n\r\n\r\n# =====================================================================\r\n# 6, 7, 8. PROCESS EACH CSV, ADD METADATA, AND WRITE TO PARQUET\r\n# =====================================================================\r\n\r\nfrom pyspark.sql.functions import (\r\n    current_timestamp,\r\n    input_file_name,\r\n    lit\r\n)\r\n\r\nprint(f\"Beginning processing for {len(uploaded_s3_keys)} files...\")\r\n\r\ntotal_records_processed = 0\r\n\r\n# Iterate through the files one by one on the Driver node\r\nfor s3_key in uploaded_s3_keys:\r\n    \r\n    # --- A. Construct Paths & Names ---\r\n    # Extract the file name (e.g., 'retail_sales.csv')\r\n    file_name = os.path.basename(s3_key)\r\n    \r\n    # Strip the extension for the folder name (e.g., 'retail_sales')\r\n    clean_table_name = os.path.splitext(file_name)[0]\r\n    \r\n    # Define exact source and target paths\r\n    full_s3_source_path = f\"s3://{bronze_bucket}/{s3_key}\"\r\n    bronze_output_path = f\"s3://{bronze_bucket}/bronze/{clean_table_name}/\"\r\n    \r\n    print(f\"\\n--- Processing: {clean_table_name} ---\")\r\n    \r\n    # --- B. Read the Specific CSV ---\r\n    raw_spark_df = (\r\n        spark.read\r\n        .format(\"csv\")\r\n        .option(\"header\", \"true\")\r\n        .option(\"inferSchema\", \"true\")\r\n        .option(\"mode\", \"PERMISSIVE\")\r\n        .load(full_s3_source_path)\r\n    )\r\n\r\n    if len(raw_spark_df.columns) == 0:\r\n        print(f\"Skipping '{file_name}': Spark could not identify any columns.\")\r\n        continue\r\n\r\n    record_count = raw_spark_df.count()\r\n    \r\n    if record_count == 0:\r\n        print(f\"Skipping '{file_name}': File contains no data rows.\")\r\n        continue\r\n        \r\n    total_records_processed += record_count\r\n    print(f\"Read {record_count} records.\")\r\n\r\n    # --- C. Add Ingestion Metadata ---\r\n    bronze_spark_df = (\r\n        raw_spark_df\r\n        .withColumn(\"source_file_name\", input_file_name())\r\n        .withColumn(\"ingestion_timestamp\", current_timestamp())\r\n        .withColumn(\"ingestion_date\", lit(current_date))\r\n    )\r\n\r\n    # --- D. Write to Dedicated Parquet Folder ---\r\n    print(f\"Writing to: {bronze_output_path}\")\r\n    \r\n    (\r\n        bronze_spark_df.write\r\n        .format(\"parquet\")\r\n        .option(\"compression\", \"snappy\")\r\n        .mode(\"overwrite\")\r\n        .save(bronze_output_path)\r\n    )\r\n\r\nprint(f\"\\nAll files processed. Total records written to Bronze: {total_records_processed}\")# bronze_spark_df = (\r\n\r\n# =====================================================================\r\n# 9. DELETE TEMPORARY CSV FILES FROM S3\r\n# =====================================================================\r\n\r\ntry:\r\n    delete_objects = [\r\n        {\"Key\": s3_key}\r\n        for s3_key in uploaded_s3_keys\r\n    ]\r\n\r\n    s3_client.delete_objects(\r\n        Bucket=bronze_bucket,\r\n        Delete={\r\n            \"Objects\": delete_objects,\r\n            \"Quiet\": True,\r\n        },\r\n    )\r\n\r\n    print(\"Temporary CSV files deleted from S3.\")\r\n\r\nexcept Exception as error:\r\n    # Bronze processing already succeeded, so cleanup failure\r\n    # should not fail the complete Glue job.\r\n    print(\r\n        f\"Warning: Bronze load succeeded, but temporary files \"\r\n        f\"could not be deleted: {error}\"\r\n    )\r\n\r\n\r\n# =====================================================================\r\n# 10. COMMIT GLUE JOB\r\n# =====================================================================\r\n\r\njob.commit()\r\n\r\nprint(\"Google Drive to S3 Bronze Glue job completed successfully.\")"
+}

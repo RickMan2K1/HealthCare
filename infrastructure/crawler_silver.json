@@ -1,0 +1,50 @@
+{
+    "Crawler": {
+        "Name": "healthcare_silver_crawler",
+        "Role": "s3-to-s3-role",
+        "Targets": {
+            "S3Targets": [
+                {
+                    "Path": "s3://healthcare-rick/silver/",
+                    "Exclusions": []
+                }
+            ],
+            "JdbcTargets": [],
+            "MongoDBTargets": [],
+            "DynamoDBTargets": [],
+            "CatalogTargets": [],
+            "DeltaTargets": [],
+            "IcebergTargets": [],
+            "HudiTargets": []
+        },
+        "DatabaseName": "healthcare_silver",
+        "Classifiers": [],
+        "RecrawlPolicy": {
+            "RecrawlBehavior": "CRAWL_EVERYTHING"
+        },
+        "SchemaChangePolicy": {
+            "UpdateBehavior": "UPDATE_IN_DATABASE",
+            "DeleteBehavior": "DEPRECATE_IN_DATABASE"
+        },
+        "LineageConfiguration": {
+            "CrawlerLineageSettings": "DISABLE"
+        },
+        "State": "READY",
+        "CrawlElapsedTime": 0,
+        "CreationTime": "2026-07-28T20:40:41-04:00",
+        "LastUpdated": "2026-07-28T21:58:31-04:00",
+        "LastCrawl": {
+            "Status": "SUCCEEDED",
+            "LogGroup": "/aws-glue/crawlers",
+            "LogStream": "healthcare_silver_crawler",
+            "MessagePrefix": "edd692af-6b86-45bd-91c7-13815ba3389a",
+            "StartTime": "2026-07-28T22:13:26-04:00"
+        },
+        "Version": 2,
+        "Configuration": "{\"Version\":1.0,\"CreatePartitionIndex\":true}",
+        "LakeFormationConfiguration": {
+            "UseLakeFormationCredentials": false,
+            "AccountId": ""
+        }
+    }
+}

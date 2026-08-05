@@ -37,6 +37,35 @@ def run_query(query):
     return pd.read_sql(query, conn) # type: ignore
 
 # -------------------------------------------------------------------
+# Control the color of the x & Y
+# -------------------------------------------------------------------
+def style_figure(fig):
+    """Applies dark, high-contrast labels and sharp axis lines to any Plotly figure."""
+    fig.update_layout(
+        font=dict(color="#111111"),  # Base text color
+        title=dict(font=dict(color="#000000", size=16)),
+        xaxis=dict(
+            title_font=dict(color="#000000", size=14),
+            tickfont=dict(color="#111111", size=12),
+            showline=True,
+            linecolor="#222222",
+            linewidth=1.5,
+            gridcolor="#E5E5E5"  # Subtle light grey background grid lines
+        ),
+        yaxis=dict(
+            title_font=dict(color="#000000", size=14),
+            tickfont=dict(color="#111111", size=12),
+            showline=True,
+            linecolor="#222222",
+            linewidth=1.5,
+            gridcolor="#E5E5E5"
+        ),
+        paper_bgcolor="rgba(0,0,0,0)",  # Transparent background to match Streamlit theme
+        plot_bgcolor="rgba(0,0,0,0)"
+    )
+    return fig
+
+# -------------------------------------------------------------------
 # SIDEBAR FILTERS
 # -------------------------------------------------------------------
 st.sidebar.header("Filter Options")
@@ -142,7 +171,7 @@ with tab1:
     st.caption("Measures daily nursing care density relative to resident volume.")
     
     df_trend = df_data.groupby("Year_Month")["Monthly_HPRD"].mean().reset_index()
-    fig_hprd = px.line(
+    fig_hprd = px.line( 
         df_trend, 
         x="Year_Month", 
         y="Monthly_HPRD", 
@@ -150,7 +179,7 @@ with tab1:
         labels={"Year_Month": "Year-Month", "Monthly_HPRD": "Nurse HPRD"},
         title="Average Nurse HPRD Over Time"
     )
-    st.plotly_chart(fig_hprd, width='stretch')
+    st.plotly_chart(style_figure(fig_hprd), width='stretch')
 
 with tab2:
     st.subheader("Contractor / Agency Staffing Dependence")
@@ -162,11 +191,10 @@ with tab2:
         df_data,
         x="Year_Month",
         y="Contractor_Hour_Pct",
-        color="Ownership_Type" if "Ownership_Type" in df_data.columns else None,
         title="Contractor Hour Share (%) by Time & Ownership Type",
         barmode="group"
     )
-    st.plotly_chart(fig_contract, width='stretch')
+    st.plotly_chart(style_figure(fig_contract), width='stretch')
 
 with tab3:
     st.subheader("Top 10 Facilities by Contractor Dependence")
@@ -226,7 +254,7 @@ with tab4:
         title="Facility Occupancy Rate (%) vs. Nurse HPRD",
         labels={"Occupancy_Rate_Pct": "Occupancy Rate (%)", "Monthly_HPRD": "Nurse HPRD"}
     )
-    st.plotly_chart(fig_q1, use_container_width=True)
+    st.plotly_chart(style_figure(fig_q1), width = 'stretch')
     st.info("📌 **Finding:** Facilities running near 100% capacity often exhibit suppressed HPRD unless supplemented with agency/contract hours.")
 
     st.markdown("---")
@@ -262,7 +290,7 @@ with tab4:
         title="Top 10 Facilities by Total Contract Overtime Hours",
         labels={"Total_Contract_Hours": "Total Contract Hours", "Provider_Name": "Facility"}
     )
-    st.plotly_chart(fig_q2, use_container_width=True)
+    st.plotly_chart(style_figure(fig_q2), width='stretch')
 
     st.markdown("---")
 

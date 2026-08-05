@@ -1,0 +1,49 @@
+{
+	"jobConfig": {
+		"name": "healthcare_bronze_to_silver",
+		"description": "",
+		"role": "arn:aws:iam::890059276181:role/service-role/AWSGlueServiceRole-dea",
+		"command": "glueetl",
+		"version": "5.1",
+		"runtime": null,
+		"workerType": "G.1X",
+		"numberOfWorkers": 10,
+		"maxCapacity": 10,
+		"jobRunQueuingEnabled": false,
+		"maxRetries": 0,
+		"timeout": 480,
+		"maxConcurrentRuns": 1,
+		"security": "none",
+		"scriptName": "healthcare_bronze_to_silver.py",
+		"scriptLocation": "s3://aws-glue-assets-890059276181-us-east-1/scripts/",
+		"language": "python-3",
+		"spark": true,
+		"sparkConfiguration": "standard",
+		"jobParameters": [
+			{
+				"key": "--conf",
+				"value": "spark.eventLog.rolling.enabled=true --conf spark.sql.catalog.glue_catalog.glue.skip-name-validation=true",
+				"existing": false
+			}
+		],
+		"tags": [],
+		"jobMode": "DEVELOPER_MODE",
+		"createdOn": "2026-07-28T22:08:00.791Z",
+		"developerMode": true,
+		"connectionsList": [],
+		"temporaryDirectory": "s3://aws-glue-assets-890059276181-us-east-1/temporary/",
+		"logging": true,
+		"glueHiveMetastore": true,
+		"etlAutoTuning": true,
+		"metrics": true,
+		"observabilityMetrics": true,
+		"bookmark": "job-bookmark-disable",
+		"sparkPath": "s3://aws-glue-assets-890059276181-us-east-1/sparkHistoryLogs/",
+		"flexExecution": false,
+		"minFlexWorkers": null,
+		"maintenanceWindow": null
+	},
+	"hasBeenSaved": false,
+	"usageProfileName": null,
+	"script": "import sys\r\nfrom awsglue.transforms import *\r\nfrom awsglue.utils import getResolvedOptions\r\nfrom pyspark.context import SparkContext\r\nfrom awsglue.context import GlueContext\r\nfrom awsglue.job import Job\r\nfrom pyspark.sql import functions as F\r\nfrom pyspark.sql.types import DoubleType, IntegerType\r\n\r\n# Initialize Glue and Spark contexts\r\nsc = SparkContext()\r\nglueContext = GlueContext(sc)\r\nspark = glueContext.spark_session\r\njob = Job(glueContext)\r\n\r\n# -------------------------------------------------------------------\r\n# 1. PATH CONFIGURATIONS\r\n# -------------------------------------------------------------------\r\nBRONZE_BASE = \"s3://healthcare-rick/bronze/\"\r\nSILVER_BASE = \"s3://healthcare-rick/silver/\"\r\nQUARANTINE_BASE = \"s3://healthcare-rick/quarantine/\"\r\n\r\n# Helper Function: Strip double quotes from all string columns in a DataFrame\r\ndef strip_quotes(df):\r\n    string_cols = [field.name for field in df.schema.fields if field.dataType.typeName() == 'string']\r\n    for col_name in string_cols:\r\n        df = df.withColumn(col_name, F.regexp_replace(F.col(col_name), '\"', ''))\r\n        df = df.withColumn(col_name, F.trim(F.col(col_name)))\r\n    return df\r\n\r\n# -------------------------------------------------------------------\r\n# 2. PROCESS DAILY NURSE STAFFING (FACT TABLE)\r\n# -------------------------------------------------------------------\r\ndf_pbj_raw = spark.read.parquet(f\"{BRONZE_BASE}PBJ_Daily_Nurse_Staffing_Q2_2024/\")\r\n\r\n# Data Quality Validation & Isolation Rules\r\ndf_pbj_validated = df_pbj_raw.withColumn(\r\n    \"quarantine_reason\",\r\n    F.when(\r\n        F.col(\"PROVNUM\").isNull() | (F.trim(F.col(\"PROVNUM\")) == \"\"), \r\n        F.lit(\"MISSING_PROVIDER_NUM\")\r\n    ).when(\r\n        F.to_date(F.col(\"WorkDate\").cast(\"string\"), \"yyyyMMdd\").isNull(),\r\n        F.lit(\"INVALID_WORK_DATE\")\r\n    ).when(\r\n        F.col(\"MDScensus\").cast(DoubleType()).isNull() | (F.col(\"MDScensus\") < 0),\r\n        F.lit(\"INVALID_CENSUS_VALUE\")\r\n    ).otherwise(F.lit(None))\r\n)\r\n\r\n# Route Quarantine / Bad Records\r\ndf_pbj_quarantine = df_pbj_validated.filter(F.col(\"quarantine_reason\").isNotNull())\r\n(\r\n    df_pbj_quarantine\r\n    .withColumn(\"quarantined_at\", F.current_timestamp())\r\n    .write\r\n    .mode(\"append\")\r\n    .partitionBy(\"quarantine_reason\")\r\n    .parquet(f\"{QUARANTINE_BASE}daily_nurse_staffing_bad_records/\")\r\n)\r\n\r\n# Process Valid Silver Daily Staffing Records\r\ndf_pbj_clean = (\r\n    df_pbj_validated\r\n    .filter(F.col(\"quarantine_reason\").isNull())\r\n    .drop(\"quarantine_reason\")\r\n    # Harmonize Key and Dates\r\n    .withColumn(\"CCN\", F.lpad(F.trim(F.col(\"PROVNUM\").cast(\"string\")), 6, \"0\"))\r\n    .withColumn(\"WorkDate\", F.to_date(F.col(\"WorkDate\").cast(\"string\"), \"yyyyMMdd\"))\r\n    .withColumn(\"State\", F.trim(F.col(\"STATE\")))\r\n    \r\n    # Cast Numeric Fields & Handle Nulls\r\n    .withColumn(\"MDScensus\", F.col(\"MDScensus\").cast(DoubleType()))\r\n    .withColumn(\"Hrs_RN\", F.coalesce(F.col(\"Hrs_RN\").cast(DoubleType()), F.lit(0.0)))\r\n    .withColumn(\"Hrs_LPN\", F.coalesce(F.col(\"Hrs_LPN\").cast(DoubleType()), F.lit(0.0)))\r\n    .withColumn(\"Hrs_CNA\", F.coalesce(F.col(\"Hrs_CNA\").cast(DoubleType()), F.lit(0.0)))\r\n    .withColumn(\"Hrs_RN_emp\", F.coalesce(F.col(\"Hrs_RN_emp\").cast(DoubleType()), F.lit(0.0)))\r\n    .withColumn(\"Hrs_RN_ctr\", F.coalesce(F.col(\"Hrs_RN_ctr\").cast(DoubleType()), F.lit(0.0)))\r\n    .withColumn(\"Hrs_LPN_emp\", F.coalesce(F.col(\"Hrs_LPN_emp\").cast(DoubleType()), F.lit(0.0)))\r\n    .withColumn(\"Hrs_LPN_ctr\", F.coalesce(F.col(\"Hrs_LPN_ctr\").cast(DoubleType()), F.lit(0.0)))\r\n    .withColumn(\"Hrs_CNA_emp\", F.coalesce(F.col(\"Hrs_CNA_emp\").cast(DoubleType()), F.lit(0.0)))\r\n    .withColumn(\"Hrs_CNA_ctr\", F.coalesce(F.col(\"Hrs_CNA_ctr\").cast(DoubleType()), F.lit(0.0)))\r\n    \r\n    # Calculate Derived Silver Metrics\r\n    .withColumn(\"Total_Nurse_Hours\", F.col(\"Hrs_RN\") + F.col(\"Hrs_LPN\") + F.col(\"Hrs_CNA\"))\r\n    .withColumn(\"Total_Contract_Hours\", F.col(\"Hrs_RN_ctr\") + F.col(\"Hrs_LPN_ctr\") + F.col(\"Hrs_CNA_ctr\"))\r\n    .withColumn(\"Nurse_Hours_Per_Resident_Day\", \r\n                F.when(F.col(\"MDScensus\") > 0, F.col(\"Total_Nurse_Hours\") / F.col(\"MDScensus\"))\r\n                .otherwise(0.0))\r\n    .dropDuplicates([\"CCN\", \"WorkDate\"])\r\n)\r\n\r\n# Write Silver Daily Staffing\r\n(\r\n    df_pbj_clean.write\r\n    .mode(\"overwrite\")\r\n    .partitionBy(\"State\")\r\n    .parquet(f\"{SILVER_BASE}silver_daily_nurse_staffing/\")\r\n)\r\n\r\n# -------------------------------------------------------------------\r\n# 3. PROCESS PROVIDER INFORMATION (DIMENSION TABLE)\r\n# -------------------------------------------------------------------\r\ndf_provider_raw = spark.read.parquet(f\"{BRONZE_BASE}NH_ProviderInfo_Oct2024/\")\r\ndf_provider_stripped = strip_quotes(df_provider_raw)\r\n\r\ndf_dim_provider = (\r\n    df_provider_stripped\r\n    .withColumn(\"CCN\", F.lpad(F.col(\"CMS Certification Number (CCN)\"), 6, \"0\"))\r\n    .select(\r\n        F.col(\"CCN\"),\r\n        F.col(\"Provider Name\").alias(\"Provider_Name\"),\r\n        F.col(\"City/Town\").alias(\"City\"),\r\n        F.col(\"State\"),\r\n        F.lpad(F.col(\"ZIP Code\"), 5, \"0\").alias(\"ZIP_Code\"),\r\n        F.col(\"County/Parish\").alias(\"County\"),\r\n        F.col(\"Ownership Type\").alias(\"Ownership_Type\"),\r\n        F.coalesce(F.col(\"Number of Certified Beds\").cast(IntegerType()), F.lit(0)).alias(\"Certified_Beds\"),\r\n        F.col(\"Total nursing staff turnover\").cast(DoubleType()).alias(\"Total_Nursing_Turnover_Pct\"),\r\n        F.col(\"Registered Nurse turnover\").cast(DoubleType()).alias(\"RN_Turnover_Pct\"),\r\n        F.col(\"Latitude\").cast(DoubleType()).alias(\"Latitude\"),\r\n        F.col(\"Longitude\").cast(DoubleType()).alias(\"Longitude\")\r\n    )\r\n    .filter(F.col(\"CCN\").isNotNull() & (F.col(\"CCN\") != \"\"))\r\n    .dropDuplicates([\"CCN\"])\r\n)\r\n\r\n# Write Silver Provider Dimension\r\n(\r\n    df_dim_provider.write\r\n    .mode(\"overwrite\")\r\n    .parquet(f\"{SILVER_BASE}silver_dim_provider/\")\r\n)\r\n\r\n# -------------------------------------------------------------------\r\n# 4. PROCESS HEALTH CITATIONS (DIMENSION/EVENTS TABLE)\r\n# -------------------------------------------------------------------\r\ndf_citations_raw = spark.read.parquet(f\"{BRONZE_BASE}NH_HealthCitations_Oct2024/\")\r\ndf_citations_stripped = strip_quotes(df_citations_raw)\r\n\r\ndf_citations_clean = (\r\n    df_citations_stripped\r\n    .withColumn(\"CCN\", F.lpad(F.col(\"CMS Certification Number (CCN)\"), 6, \"0\"))\r\n    .select(\r\n        F.col(\"CCN\"),\r\n        F.to_date(F.col(\"Survey Date\"), \"yyyy-MM-dd\").alias(\"Survey_Date\"),\r\n        F.col(\"Deficiency Tag Number\").cast(IntegerType()).alias(\"Deficiency_Tag_Number\"),\r\n        F.col(\"Scope Severity Code\").alias(\"Scope_Severity_Code\"),\r\n        F.col(\"Deficiency Description\").alias(\"Deficiency_Description\"),\r\n        F.col(\"Deficiency Category\").alias(\"Deficiency_Category\"),\r\n        F.col(\"Inspection Cycle\").cast(IntegerType()).alias(\"Inspection_Cycle\"),\r\n        F.col(\"Standard Deficiency\").alias(\"Is_Standard_Deficiency\"),\r\n        F.col(\"Complaint Deficiency\").alias(\"Is_Complaint_Deficiency\")\r\n    )\r\n    .filter(F.col(\"CCN\").isNotNull() & (F.col(\"CCN\") != \"\"))\r\n)\r\n\r\n# Write Silver Health Citations\r\n(\r\n    df_citations_clean.write\r\n    .mode(\"overwrite\")\r\n    .parquet(f\"{SILVER_BASE}silver_health_citations/\")\r\n)\r\n\r\njob.commit()"
+}
